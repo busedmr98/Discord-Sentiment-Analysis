@@ -1,0 +1,677 @@
+---
+title: "Duygu Analizi"
+author: "Buse Demir"
+date: "11 09 2022"
+output:
+  html_document: default
+  word_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## VERİ OKUMA
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(magrittr) 
+library(lubridate) # date operations
+library(tidyverse) # ggplot2, tidyr, dplyr. . .
+library(gridExtra) # multiple grid-based plots on a page
+library(ggforce) # accelerating ggplot2
+library(rvest)
+library(janitor)
+library(dplyr)
+library(readr)
+library(hms)
+library(gridExtra)
+library(sentimentr)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+packages <- c("readxl","tidytext","plyr","dplyr","tidyr","ggplot2","scales",
+              "purrr","textdata","wordcloud","reshape2","stringr","igraph",
+              "ggraph","widyr","grid","arules","tm","topicmodels")
+for(i in packages){
+  if(!require(i,character.only = T, quietly = T)){
+    install.packages(i)
+  }
+  library(i, character.only = T, quietly = T)
+}
+
+rm(list=ls())
+
+set.seed(2022)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+discord <- read_csv("Game.csv")
+loka_usd_max <- read_excel("loka-usd-max.xlsx")
+head(discord)
+```
+
+## VERİ ÖNİŞLEME
+### Tarih ve Saat sütunlarını Ayırma
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+### Tarih ve saat sütunlarını ayırma
+discord<-separate(discord,Date ,c("DATE","TIME"),sep=" ")
+price<-separate(loka_usd_max,snapped_at ,c("DATE","TIME"),sep=" ")
+price<-price[,-c(2,4,5)]
+price_new<-price[c(41:132),] ## 1 mart 30 mayıs arası
+head(discord)
+```
+
+## Fiyat Verisi Analizi
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+head(price_new)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+h1<-price_new %>%
+ggplot(aes(x=DATE, y=price))+geom_point(col="darkblue")
+h1
+```
+
+#### 1 marttan itibaren düşüşte olan *price* değeri 13 martta 1.56 dan  2.10 değerine çıkmış. 14 martta tekrar düşüşe geçtikten sonra artış göstermeye başlamıştır.21 martta 2.18 den 2.85 değerine çıkmış ve tekrar 2.40 değerlerine inmiştir. 29 Martta 2.40 olan *price* değerinin ani bir artışla 3.84 değerine ulaştığı görülmektedir.Bu tarihten sonra arada küçük artışlar yaşansa da düşüşe geçtiği  görülen *price* değeri 12 mayıs tarihinde 2.17 değerinden 1.04 e ani bir düşüş yaşamıştır.
+
+### ÖNEMLİ TARİHLER
+#### 30 Mart (Ani yükselme)
+#### 12 Mayıs (Ani düşüş)
+
+### Grafiği 3 farklı dönem içinde inceleme
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+h2<-price_new[c(1:29),] %>%
+ggplot(aes(x=DATE, y=price))+geom_point(col="darkred")+ggtitle("1-29 Mart")
+h2
+```
+
+#### 18 martta 1.8 olan price değeri 19 martta 2.10 değerine yükselmiş ve o tarihe kadar düşüş yaşayan değer 19 marttan sonra düşüşe geçmiş ve artmaya başlamıştır. 21 martta 2.85 ile pick değeri. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+h3<-price_new[c(29:72),] %>%
+ggplot(aes(x=DATE, y=price))+geom_point(col="purple")+ggtitle("29 Mart-11 Mayıs")
+h3
+```
+
+#### 29 martta 2.40 olan *price* 30 martta  3.84'e yükselmiş ve bu tarihten sonra ara ara artışa geçse de düşmeye başlamıştır.19 nisanda 2.76 dan 3.21 e yükselip tekrar düşüşe geçmiş.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+h4<-price_new[c(72:92),] %>%
+ggplot(aes(x=DATE, y=price))+geom_point(col="orange")+ggtitle("11 Mayıs-31 Mayıs")
+h4
+```
+
+#### 12 mayısta 2.17 den 1.04 e düşmüş ve bu tarihten sonra belirli bir düşüş ya da artış yaşamamıştır.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+grid.arrange(h2,h3,h4,top="Tarih bazında *price* değerindeki artış durumu")
+```
+
+
+### Veri Filtreleme
+### 1 Mart-30 Mayıs aralığındaki veriler
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+discord_new<-discord[c(1:81788),]
+messages<-discord_new[,-c(1,2,6,7)] ## ID,reactions ve attachment sütunları çıkarıldı.
+sum(is.na(messages)) # eksik veriler 1984 tane 
+discord_msg <- na.omit(messages) 
+```
+
+#### Veri seti 1 Mart 31 Mayıs aralığındaki mesajları içerecek şekilde filtrelenmiş ve kayıp değerler veriden çıkarılmıştır. 
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+head(price_new)
+head(discord_msg)
+``` 
+
+
+
+### Veri Temizleme
+### İngilizcede "the, is, at, on" gibi kelimeler durdurma sözcükleri (stop-words) olarak bilinir ve bir dilde en sık rastlanan sözcüklerdir. Bu ve benzeri kelimeler metinden yararlı bilgiler çıkarma açısından çok az değere sahiptir. Analizden önce metindeki bu kelimeleri kaldırmamız gerekir.Ayrıca daha sağlıklı bir analiz için metinde geçen noktalama işaretleri, rakamlar  ve linkler çıkarılmıştır.
+
+```{r}
+corpus <- iconv(discord_msg$Content)
+corpus<- Corpus(VectorSource(corpus))
+corpus <- tm_map(corpus, tolower) # Büyük harfleri küçük yapma
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+corpus<- tm_map(corpus, removePunctuation) ## Noktalama işaretlerini silme
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+corpus <- tm_map(corpus, removeNumbers) ## Rakamları silme
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+cleanset <- tm_map(corpus, removeWords, stopwords('english'))
+```
+
+### Terim sıklığı (TF)
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+removeURL<- function(x) gsub('http[[:alnum:]]*', '', x)
+cleanset<- tm_map(cleanset, content_transformer(removeURL))## linkleri silme
+corpus <- tm_map(cleanset, stemDocument)
+dtm <- DocumentTermMatrix(corpus)
+inspect(dtm)
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+d1 <- filter(discord_msg[c(1:27409),]) ## 1-29 mart
+head(d1)
+library(tm)
+corpus_1 <- iconv(d1$Content)
+corpus_1 <- Corpus(VectorSource(corpus_1))
+corpus_1 <- tm_map(corpus_1, tolower) # Büyük harfleri küçük yapma
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+corpus_1<- tm_map(corpus_1, removePunctuation) ## Noktalama işaretlerini silme
+inspect(corpus_1[1:5])
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+corpus_1 <- tm_map(corpus_1, removeNumbers) ## Rakamları silme
+inspect(corpus_1[1:5])
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+cleanset_1 <- tm_map(corpus_1, removeWords, stopwords('english'))
+inspect(cleanset_1[1:5])
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+removeURL_1 <- function(x) gsub('http[[:alnum:]]*', '', x)
+cleanset_1 <- tm_map(cleanset_1, content_transformer(removeURL_1))## linkleri silme
+```
+
+#### Mesajlarda geçen kelimelerin frekansları (1 mart-29 mart)
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+corpus_1 <- tm_map(cleanset_1, stemDocument)
+tdm_1 <- TermDocumentMatrix(corpus_1)
+tdm_1 <- as.matrix(tdm_1)
+tdm_1[1:10, 1:20]
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+w_1 <- rowSums(tdm_1)
+w_1 <- subset(w_1, w_1>=25)
+barplot(w_1,
+        las = 2,
+        col = rainbow(50))
+
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(wordcloud)
+w_1 <- sort(rowSums(tdm_1), decreasing = TRUE)
+set.seed(222)
+wordcloud(words = names(w_1),
+          freq = w_1,
+          max.words = 150,
+          random.order = F,
+          min.freq = 5,
+          colors = brewer.pal(8, 'Dark2'),
+          scale = c(5, 0.3),
+          rot.per = 0.7)
+
+```
+
+### 29 mart-11 mayıs
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+d2 <- filter(discord_msg[c(27409:57089),]) 
+head(d2)
+corpus_2 <- iconv(d2$Content)
+corpus_2<- Corpus(VectorSource(corpus_2))
+corpus_2 <- tm_map(corpus_2, tolower) # Büyük harfleri küçük yapma
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+corpus_2<- tm_map(corpus_2, removePunctuation) ## Noktalama işaretlerini silme
+inspect(corpus_2[1:5])
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+corpus_2<- tm_map(corpus_2, removeNumbers) ## Rakamları silme
+inspect(corpus_2[1:5])
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+cleanset_2 <- tm_map(corpus_2, removeWords, stopwords('english'))
+inspect(cleanset_2[1:5])
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+removeURL_2 <- function(x) gsub('http[[:alnum:]]*', '', x)
+cleanset_2 <- tm_map(cleanset_2, content_transformer(removeURL_2))## linkleri silme
+```
+
+#### Mesajlarda geçen kelimelerin frekansları (29 mart-11 mayıs)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+corpus_2 <- tm_map(cleanset_2, stemDocument)
+tdm_2 <- TermDocumentMatrix(corpus_2)
+tdm_2 <- as.matrix(tdm_2)
+tdm_2[1:10, 1:20]
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+w_2 <- rowSums(tdm_2)
+w_2 <- subset(w_2, w_2>=25)
+barplot(w_2,
+        las = 2,
+        col = rainbow(50))
+
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+w_2 <- sort(rowSums(tdm_2), decreasing = TRUE)
+set.seed(222)
+wordcloud(words = names(w_2),
+          freq = w_2,
+          max.words = 150,
+          random.order = F,
+          min.freq = 5,
+          colors = brewer.pal(8, 'Dark2'),
+          scale = c(5, 0.3),
+          rot.per = 0.7)
+
+```
+
+
+
+### Duygu Analizi
+#### Duygu analizinde duygular pozitif, negatif ve nötr olmak üzere 3 genel başlık altında sınıflandırılır. Ayrıca, bir metinde  yer alan duygunun pozitif veya negatif gücünün derecesi sayısal bir ölçekte temsil edilebilir.Bu çalışmada 4 farklı duygu sözlüğüne sahip olan  R'ın hazır paketleriden *syuzhet* paketinden yararlanılmıştır.
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+library(syuzhet)
+library(lubridate)
+library(ggplot2)
+library(scales)
+library(reshape2)
+library(dplyr)
+library(sentimentr)
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+require(plyr)
+require(dplyr)
+library(tibble)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(tibble)
+library(textdata)
+library(stringr)
+library(dplyr)
+library(plyr)
+get_sentiments("bing") # negatif pozitif
+get_sentiments("afinn") # -5 5 arası
+get_sentiments("nrc") # kelimelrin içerdiği duygular fear happy anger
+text<-discord_msg[,-c(1,2)] # sadece text içeren sütun kaldı
+data_word<-text %>% dplyr:: mutate(linenumber=row_number())%>% unnest_tokens(word,Content) # cümleler  kelimeler halinde ayrılmıştır.
+
+word<-c('ı',"ı'm" ,"ı'll","ı'd","ıs","ıt", "ıf", "ım","im","1","2","3","4","5","10","100", "https","lol","ıt's","ım","haha","tho","fuck","fucked","fcked","fucking","fucks","fuckup","dick",'shit',"shitty","bullshit","shittiest","fuckıng","fuckın","fuckin","fucker","fuck.gif","motherfucker","bitches","bitching", "bitch","damn") 
+lexicon<-c("CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE") #Küfürler ve sözlükte olmayan bazı kelimeler stop_word sözlüğündeki kelimelerle birlikte çıkarılmıştır
+curse_words<-data.frame(word,lexicon)
+stop_words_curse<-rbind(stop_words,curse_words) 
+```
+
+
+### En çok kullanılan kelimeler
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+cleandata<-data_word 
+cleandata<-cleandata %>% anti_join(stop_words)
+cleandata %>% dplyr::count(word,sort=TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+p<-cleandata%>% dplyr::count(word,sort=TRUE)%>% filter(n>800)%>% dplyr:: mutate(word=reorder(word,n)) %>% 
+  ggplot(aes(word,n))+geom_col()+xlab("kelimeler")+ylab("frekans")+coord_flip()
+p+ggtitle("En çok kullanılan kelimeler")
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+cleandata%>%anti_join(stop_words)%>% dplyr::count(word)%>%with(wordcloud(word,n,
+          max.words = 100 ,random.order = F,
+          min.freq = 5,
+          colors = brewer.pal(8, 'Dark2'),
+          scale = c(5, 0.3),
+          rot.per = 0.7))
+         
+```
+
+### Pozitif/Negatif kelimelerin ayrıldığı kelime bulutu
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(reshape2)
+cleandata%>% inner_join(get_sentiments("afinn"))%>%
+  inner_join(get_sentiments("bing"))%>% 
+  inner_join(get_sentiments("nrc"))%>%
+  anti_join(stop_words)%>% dplyr::count(word,sentiment,sort=T)%>%acast(word~sentiment,value.var="n",fill=0)%>%
+  comparison.cloud(colors = c("red","blue"),max.words = 50) #50 tane
+```
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+sentiments<-cleandata %>%inner_join(get_sentiments("bing"))%>% dplyr::count(word,sentiment,sort=TRUE)
+head(sentiments)
+sentiment_pos<-subset(sentiments,sentiment=="positive")
+sentiment_neg<-subset(sentiments,sentiment=="negative")
+```
+
+
+
+```{r}
+set.seed(2022)
+positive_score<-aggregate(n~sentiment,data=sentiment_pos,sum)
+negative_score<-aggregate(n~sentiment,data=sentiment_neg,sum)
+ratio<-(positive_score$n/negative_score$n) ## %54 pozitif duygular ağırlıklı
+```
+
+
+
+## Belirli bir dönem için 
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+class(discord_msg$TIME)
+discord_msg$DATE<-as.Date(discord_msg$DATE, "%d.%m.%Y")
+discord_date<-discord_msg %>% filter(DATE>"2022-03-29",DATE<="2022-04-05") 
+```
+
+```{r}
+
+get_sentiments("bing") # negatif pozitif
+get_sentiments("afinn") # -5 5 arası
+get_sentiments("nrc") # kelimelrin içerdiği duygular fear happy anger
+discord_date<-discord_msg[c(27410:31920),]
+text_date_new<-discord_date[,-c(1,2)] # sadece text içeren sütun kaldı
+data_word<-text_date_new %>% dplyr:: mutate(linenumber=row_number())%>% unnest_tokens(word,Content) # cümleler  kelimeler halinde ayrılmıştır.
+
+word<-c('ı',"ı'm" ,"ı'll","ı'd","ıs","ıt", "ıf", "ım","im","1","2","3","4","5","10","100", "https","lol","ıt's","ım","haha","tho","fuck","fucked","fcked","fucking","fucks","fuckup","dick",'shit',"shitty","bullshit","shittiest","fuckıng","fuckın","fuckin","fucker","fuck.gif","motherfucker","bitches","bitching", "bitch","damn") 
+lexicon<-c("CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE") #Küfürler ve sözlükte olmayan bazı kelimeler stop_word sözlüğündeki kelimelerle birlikte çıkarılmıştır
+curse_words<-data.frame(word,lexicon)
+stop_words_curse<-rbind(stop_words,curse_words) 
+```
+
+
+### En çok kullanılan kelimeler
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+cleandata<-data_word 
+cleandata<-cleandata %>% anti_join(stop_words)
+cleandata %>% dplyr::count(word,sort=TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+p<-cleandata%>% dplyr::count(word,sort=TRUE)%>% filter(n>50)%>% dplyr:: mutate(word=reorder(word,n)) %>% 
+  ggplot(aes(word,n))+geom_col()+xlab("kelimeler")+ylab("frekans")+coord_flip()
+p+ggtitle("En çok kullanılan kelimeler")
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+cleandata%>%anti_join(stop_words)%>% dplyr::count(word)%>%with(wordcloud(word,n,
+          max.words = 100 ,random.order = F,
+          min.freq = 5,
+          colors = brewer.pal(8, 'Dark2'),
+          scale = c(5, 0.3),
+          rot.per = 0.7))
+         
+```
+
+### Pozitif/Negatif kelimelerin ayrıldığı kelime bulutu
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(reshape2)
+cleandata%>% inner_join(get_sentiments("afinn"))%>%
+  inner_join(get_sentiments("bing"))%>% 
+  inner_join(get_sentiments("nrc"))%>%
+  anti_join(stop_words)%>% dplyr::count(word,sentiment,sort=T)%>%acast(word~sentiment,value.var="n",fill=0)%>%
+  comparison.cloud(colors = c("red","blue"),max.words = 50) #50 tane
+```
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+sentiments<-cleandata %>%inner_join(get_sentiments("bing"))%>% dplyr:: count(word,sentiment,sort=TRUE)
+head(sentiments)
+sentiment_pos<-subset(sentiments,sentiment=="positive")
+sentiment_neg<-subset(sentiments,sentiment=="negative")
+```
+
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+set.seed(2022)
+positive_score<-aggregate(n~sentiment,data=sentiment_pos,sum)
+negative_score<-aggregate(n~sentiment,data=sentiment_neg,sum)
+ratio<-(positive_score$n/negative_score$n) ## %61 pozitif duygular ağırlıklı
+```
+
+### 30 mayıs 4 nisan tarihleri fiyatın artışının en çok görüldüğü tarihlerdir. Yalnızca bu tarihler arasında duygu analizi sonuçlarına bakıldığında pozitif sınıflandırılan kelimelerin negatif sınıfına giren kelimelere oranının % 61 olduğu görülmüştür. 3 aylık periyoddaki oran %54 idi. 
+
+
+
+## Belirli bir dönem için 
+#### 12 mayıs 20 mayıs
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+discord_date2<-discord_msg[c(57090:68306),]
+text_date_new2<-discord_date2[,-c(1,2)] # sadece text içeren sütun kaldı
+data_word<-text_date_new2 %>% dplyr:: mutate(linenumber=row_number())%>% unnest_tokens(word,Content) # cümleler  kelimeler halinde ayrılmıştır.
+
+word<-c('ı',"ı'm" ,"ı'll","ı'd","ıs","ıt", "ıf", "ım","im","1","2","3","4","5","10","100", "https","lol","ıt's","ım","haha","tho","fuck","fucked","fcked","fucking","fucks","fuckup","dick",'shit',"shitty","bullshit","shittiest","fuckıng","fuckın","fuckin","fucker","fuck.gif","motherfucker","bitches","bitching", "bitch","damn") 
+lexicon<-c("CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE","CURSE") #Küfürler ve sözlükte olmayan bazı kelimeler stop_word sözlüğündeki kelimelerle birlikte çıkarılmıştır
+curse_words<-data.frame(word,lexicon)
+stop_words_curse<-rbind(stop_words,curse_words) 
+```
+
+
+### En çok kullanılan kelimeler
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+cleandata<-data_word 
+cleandata<-cleandata %>% anti_join(stop_words)
+cleandata %>% dplyr:: count(word,sort=TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+p<-cleandata%>% dplyr::count(word,sort=TRUE)%>% filter(n>150,word!="ı")%>% dplyr::mutate(word=reorder(word,n)) %>% 
+  ggplot(aes(word,n))+geom_col()+xlab("kelimeler")+ylab("frekans")+coord_flip()
+p+ggtitle("En çok kullanılan kelimeler")
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+cleandata%>%anti_join(stop_words)%>%dplyr::count(word)%>%with(wordcloud(word,n,
+          max.words = 100 ,random.order = F,
+          min.freq = 5,
+          colors = brewer.pal(8, 'Dark2'),
+          scale = c(5, 0.3),
+          rot.per = 0.7))
+         
+```
+
+### Pozitif/Negatif kelimelerin ayrıldığı kelime bulutu
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(reshape2)
+cleandata%>% inner_join(get_sentiments("afinn"))%>%
+  inner_join(get_sentiments("bing"))%>% 
+  inner_join(get_sentiments("nrc"))%>%
+  anti_join(stop_words)%>%dplyr::count(word,sentiment,sort=T)%>%acast(word~sentiment,value.var="n",fill=0)%>%
+  comparison.cloud(colors = c("red","blue"),max.words = 50) #50 tane
+```
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+sentiments<-cleandata %>%inner_join(get_sentiments("bing"))%>% dplyr:: count(word,sentiment,sort=TRUE)
+head(sentiments)
+sentiment_pos<-subset(sentiments,sentiment=="positive")
+sentiment_neg<-subset(sentiments,sentiment=="negative")
+```
+
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+set.seed(2022)
+positive_score<-aggregate(n~sentiment,data=sentiment_pos,sum)
+negative_score<-aggregate(n~sentiment,data=sentiment_neg,sum)
+ratio<-(positive_score$n/negative_score$n) ## %53 pozitif 
+ratio
+```
+### Fiyat artışının düştüğü dönemde negatif sınıfta yer alan kelimelerin oranı artmıştır. 
+
+
+## Model Kurma
+
+### Literatürde duygu analizi ile ilgili yapılan çalışmalarda en sık kullanılan model *Naive Bayes* modelidir.Oldukça temel ve basit bir yöntem olması ve duygu analizi,belge sınıflandırma,e-posta spam filtreleme gibi uygulamalarda  iyi ve yüksek doğruluklu sonuçlar vermesi ilk model olarak bu modeli seçmemize sebep olmuştur.  Pozitif,  negatif  ve nötr  duygu sınıflarına ait etiketlenmiş  veriler  duygu kütüphanesi verileri ile  test  verileri üzerinden Naive  Bayes  sınıflandırmasına  tabii  tutulmuştur. Projenin ilerki aşamalarında Denetimli Makine Öğrenmesi algoritmalarından duygu analizi ve metin sınıflandırmada iyi sonuçlar veren *Destek Vektör Makineleri (SVM)* ve ağaç yapılarından *CART (Classification and Regression Trees)* ve *Rastgele Orman* algoritmaları üzerinden kurulan modellerin sonuçları karşılaştırılacak ve en iyi sonuçları veren model seçilecektir. Ayrıca literatürde twitter üzerinden yapılan duygu analizi çalışmalarının bazılarında denetimsiz makine öğrenmesi algoritmaları da kullanılmıştır. Bu çalışmada da Denetimsiz algoritmlardan PCA ve *Kümeleme (clustering)* algortimları kullanılacaktır.PCA(Temel Bileşenler Analizi),Sınıflandırma ve görüntü sıkıştırma alanlarında kullanılan  bir istatistiksel tekniktir. Temel amacı yüksek boyutlu verilerde en yüksek varyans ile  boyut indirgemeyi sağlamaktır. Yüksek boyutlu verilerdeki genel özellikleri bularak boyut sayısının azaltılmasını ve verinin sıkıştırılmasını sağlar.Fakat verinin boyutunun azaltılması ile veriye ait bazı özellikler kaybedilir. burdaki amaç, bu kaybolan özelliklerin veri hakkında çok az bilgi içeriyor olmasıdır. Bu yöntem ile yüksek korelasyonlu değişkenler bir araya gelerek, verideki en çok varyasyonu oluşturan “temel bileşenler” olarak adlandırılan daha az sayıda yapay değişken kümesi oluşturur. Bu yöntemle veri boyutu küçültülerek  temel bileşenlerin baz alındığı yeni veri kümesi üzerinden *K-means* ve *Hiyerarşik* kümeleme algoritmaları kullanılarak en iyi sonuç veren modeller karşılaştırılacaktır.
+
+
+### Naive Bayes Sınıflandırıcısı
+
+```{r eval=FALSE, include=FALSE}
+library(gmodels)
+replace<-function(x){
+  sinif=x["sentiment"]
+  if(sinif=="positive"){
+    return(1)
+  }else{
+    return(0)
+  }
+}
+
+sonuc<-apply(sentiments,MARGIN=1,FUN=replace) 
+## pozitif ve negatif sınıflar 1 ve 0 olarak etiketlendi
+sentiments["sinif"]<-sonuc
+
+sentiments$sentiment<- factor(sentiments$sentiment)
+
+# Check the counts of positive and negative scores
+table(sentiments$sentiment) #667 negatif #362 pozitif
+```
+
+
+
+
+### Veri seti train ve test olmak üzere ikiye ayrılmıştır. Model test verisi üzerinden test edilecek ve train verisi üzerinden eğitilecektir.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(RTextTools)
+library(e1071)
+library(caret) 
+set.seed(2022)
+index = sample(1:nrow(sentiments), size = .9 * nrow(sentiments))
+train = sentiments[index, ] #926
+test = sentiments[-index, ] #103
+head(train)
+head(test)
+
+```
+
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+set.seed(2022)
+classifier <- naiveBayes(sentiment ~ ., data = test)
+cl<-naiveBayes(sentiment~.,data=train)
+classifier ##model train seti üzerinden kurulumuştur. Test seti ile doğruluğuna bakılmıştır
+
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+set.seed(2022)
+pred <- predict(classifier, newdata =test)
+ 
+# Confusion Matrix
+cm <- table(test$sentiment, pred)
+cm #test verisindeki sınıfların tahmini
+ 
+# Model Evaluation
+confusionMatrix(cm)
+```
+
+### Model geçerliliği (accuracy) %98. Yani kurulan model yeni gelecek verileri %98 ile doğru sınıflandıracaktır. p-value 1'den oldukça küçüktür bu da modelin geçerliliği açısından önemlidir.
+## Sensitivity,Specificity ,Balanced Accuracy değerleri de modelin iyi olduğunu göstermektedir.
+### Alternatif modeller kurulup sonuçlar karşılaştırılacaktır.
+
+
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+replace<-function(x)
+{
+  duygu=x["sentiment"]
+  if (duygu=="positive"){
+    return(1)
+  }else{
+    return(-1)
+  }
+}
+sonuc<-apply(sentiments,MARGIN=1,FUN=replace)
+sentiments["value"]<-sonuc
+
+neg=sentiments %>% select(c(word,value))
+neg=neg%>% filter(value==-1)
+pos=sentiments%>%select(c(word,value))
+pos=pos%>%filter(value==1)
+DF<-rbind(neg,pos)
+DF$lengths<-unlist(lapply(DF$word, nchar))
+DF<-DF[ order(-DF[,3]),]
+
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+scoreSentence <- function(sentence){
+  score<-0
+  for(x in 1:nrow(DF)){
+    count<-length(grep(DF[x,1],sentence))
+    if(count){
+      score<-score + (count * DF[x,2])
+      sentence<-sub(DF[x,1],'',sentence)
+    }
+  }
+  score
+}
+discord_msg[c(1:10),]
+
+SentimentScore<- unlist(lapply(discord_msg$Content, scoreSentence))
+output <- cbind(discord_msg, SentimentScore)
+
+library(writexl)
+getwd()
+write_csv(output, 'C:\\Users\\asus\\Desktop\\Ders\\Game Analysis\\data.csv')
+write_csv(price_new,'C:\\Users\\asus\\Desktop\\Ders\\Game Analysis\\price.csv')
+```
+
+### Cümlelerin duygu skorları
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+score <- read_csv("score.csv")
+head(score)
+library(lmtest)
+top=0
+if(score$SentimentScore!=0){
+ a<-top+score$SentimentScore
+  a
+}
+mart_1<-score%>%filter(DATE=="1.03.2022")
+```
+
+## Nedensellik Testleri 
+#### Fiyat artışı mı mesajların içeriğini etkiliyor mesajlar mı fiyat durumunu etkiliyor?
